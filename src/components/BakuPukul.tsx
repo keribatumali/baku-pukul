@@ -11,6 +11,36 @@ const GROUND_Y = 350;
 
 type PlayerState = 'idle' | 'walking' | 'jumping' | 'punching' | 'hit' | 'dead';
 
+class Particle {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number = 1.0;
+  color: string;
+
+  constructor(x: number, y: number, color: string) {
+    this.x = x;
+    this.y = y;
+    this.vx = (Math.random() - 0.5) * 10;
+    this.vy = (Math.random() - 0.5) * 10;
+    this.color = color;
+  }
+
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.life -= 0.05;
+  }
+
+  draw(ctx: CanvasRenderingContext2D) {
+    ctx.globalAlpha = this.life;
+    ctx.fillStyle = this.color;
+    ctx.fillRect(this.x, this.y, 4, 4);
+    ctx.globalAlpha = 1.0;
+  }
+}
+
 interface PlayerConfig {
   x: number;
   color: string;
@@ -41,6 +71,7 @@ class Player {
   punchCooldown: number = 0;
   hitCooldown: number = 0;
   score: number = 0;
+  frame: number = 0;
 
   constructor(config: PlayerConfig) {
     this.x = config.x;
@@ -51,7 +82,8 @@ class Player {
     this.facing = config.facing;
   }
 
-  update(keys: Set<string>, otherPlayer: Player) {
+  update(keys: Set<string>, otherPlayer: Player, onHit: (x: number, y: number) => void) {
+    this.frame++;
     // Cooldowns
     if (this.punchCooldown > 0) this.punchCooldown--;
     if (this.hitCooldown > 0) this.hitCooldown--;
@@ -84,7 +116,7 @@ class Player {
       if (keys.has(this.controls.punch) && this.punchCooldown === 0) {
         this.state = 'punching';
         this.punchCooldown = 20;
-        this.checkHit(otherPlayer);
+        this.checkHit(otherPlayer, onHit);
       }
     }
 
@@ -110,7 +142,7 @@ class Player {
     }
   }
 
-  checkHit(other: Player) {
+  checkHit(other: Player, onHit: (x: number, y: number) => void) {
     const punchRange = 60;
     const isFacingOther = (this.facing === 'right' && other.x > this.x) || 
                           (this.facing === 'left' && other.x < this.x);
@@ -119,6 +151,9 @@ class Player {
     const yDist = Math.abs(this.y - other.y);
 
     if (isFacingOther && dist < punchRange && yDist < this.height) {
+      const hitX = this.facing === 'right' ? other.x : other.x + other.width;
+      const hitY = other.y + other.height / 2;
+      onHit(hitX, hitY);
       other.takeDamage(10);
     }
   }
@@ -136,43 +171,61 @@ class Player {
   draw(ctx: CanvasRenderingContext2D) {
     ctx.save();
     
+    // Procedural Animation Values
+    const breath = Math.sin(this.frame * 0.1) * 2;
+    const walkCycle = this.state === 'walking' ? Math.sin(this.frame * 0.2) * 10 : 0;
+    
     // Shadow
     ctx.fillStyle = 'rgba(0,0,0,0.2)';
     ctx.beginPath();
-    ctx.ellipse(this.x + this.width/2, GROUND_Y, 30, 10, 0, 0, Math.PI * 2);
+    ctx.ellipse(this.x + this.width/2, GROUND_Y, 30 + breath, 10, 0, 0, Math.PI * 2);
     ctx.fill();
 
     // Body
     ctx.fillStyle = this.color;
     if (this.state === 'hit') ctx.fillStyle = '#ffffff';
     
-    // Simple character shape
-    ctx.fillRect(this.x, this.y, this.width, this.height);
+    // Body with breathing effect
+    ctx.fillRect(this.x, this.y + breath, this.width, this.height - breath);
+
+    // Legs
+    ctx.fillStyle = this.color;
+    if (this.state === 'walking') {
+      ctx.fillRect(this.x + 10, this.y + this.height - 10, 10, 10 + walkCycle);
+      ctx.fillRect(this.x + 30, this.y + this.height - 10, 10, 10 - walkCycle);
+    }
 
     // Head
     ctx.fillStyle = '#f3f4f6';
-    ctx.fillRect(this.x + 5, this.y - 25, 40, 30);
+    ctx.fillRect(this.x + 5, this.y - 25 + breath, 40, 30);
 
     // Eyes
     ctx.fillStyle = '#000';
     const eyeOffset = this.facing === 'right' ? 25 : 5;
-    ctx.fillRect(this.x + eyeOffset, this.y - 15, 5, 5);
-    ctx.fillRect(this.x + eyeOffset + 10, this.y - 15, 5, 5);
+    const eyeBlink = Math.random() > 0.98 ? 0 : 5;
+    ctx.fillRect(this.x + eyeOffset, this.y - 15 + breath, 5, eyeBlink);
+    ctx.fillRect(this.x + eyeOffset + 10, this.y - 15 + breath, 5, eyeBlink);
 
     // Punching Arm
     if (this.state === 'punching') {
       ctx.fillStyle = this.color;
       const armX = this.facing === 'right' ? this.x + this.width : this.x - 30;
-      ctx.fillRect(armX, this.y + 20, 30, 15);
+      ctx.fillRect(armX, this.y + 20 + breath, 30, 15);
+      
+      // Punch Trail
+      ctx.fillStyle = 'rgba(255,255,255,0.3)';
+      const trailX = this.facing === 'right' ? armX - 20 : armX + 20;
+      ctx.fillRect(trailX, this.y + 20 + breath, 20, 15);
     }
 
     // Health Bar above head
     const barWidth = 60;
     const barHeight = 6;
+    const shake = this.state === 'hit' ? (Math.random() - 0.5) * 10 : 0;
     ctx.fillStyle = '#374151';
-    ctx.fillRect(this.x + (this.width - barWidth)/2, this.y - 45, barWidth, barHeight);
+    ctx.fillRect(this.x + (this.width - barWidth)/2 + shake, this.y - 45, barWidth, barHeight);
     ctx.fillStyle = this.health > 30 ? '#10b981' : '#ef4444';
-    ctx.fillRect(this.x + (this.width - barWidth)/2, this.y - 45, (this.health / 100) * barWidth, barHeight);
+    ctx.fillRect(this.x + (this.width - barWidth)/2 + shake, this.y - 45, (this.health / 100) * barWidth, barHeight);
 
     // Name
     ctx.fillStyle = '#fff';
@@ -192,9 +245,12 @@ export default function BakuPukul() {
   const [winner, setWinner] = useState<string | null>(null);
   const [p1Score, setP1Score] = useState(0);
   const [p2Score, setP2Score] = useState(0);
+  const [showFight, setShowFight] = useState(false);
   
   const playersRef = useRef<{ p1: Player; p2: Player } | null>(null);
   const keysRef = useRef<Set<string>>(new Set());
+  const particlesRef = useRef<Particle[]>([]);
+  const shakeRef = useRef(0);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => keysRef.current.add(e.code);
@@ -224,8 +280,11 @@ export default function BakuPukul() {
         facing: 'left'
       })
     };
+    particlesRef.current = [];
     setGameState('playing');
     setWinner(null);
+    setShowFight(true);
+    setTimeout(() => setShowFight(false), 1000);
   };
 
   useEffect(() => {
@@ -235,13 +294,27 @@ export default function BakuPukul() {
     const ctx = canvasRef.current?.getContext('2d');
     if (!ctx) return;
 
+    const onHit = (x: number, y: number) => {
+      shakeRef.current = 10;
+      for (let i = 0; i < 10; i++) {
+        particlesRef.current.push(new Particle(x, y, '#ffcc00'));
+      }
+    };
+
     const loop = () => {
       if (!playersRef.current) return;
       const { p1, p2 } = playersRef.current;
 
       // Update
-      p1.update(keysRef.current, p2);
-      p2.update(keysRef.current, p1);
+      p1.update(keysRef.current, p2, onHit);
+      p2.update(keysRef.current, p1, onHit);
+
+      // Update Particles
+      particlesRef.current.forEach(p => p.update());
+      particlesRef.current = particlesRef.current.filter(p => p.life > 0);
+
+      // Update Shake
+      if (shakeRef.current > 0) shakeRef.current -= 0.5;
 
       // Check Win Condition
       if (p1.health <= 0 && gameState === 'playing') {
@@ -255,6 +328,11 @@ export default function BakuPukul() {
       }
 
       // Draw
+      ctx.save();
+      if (shakeRef.current > 0) {
+        ctx.translate((Math.random() - 0.5) * shakeRef.current, (Math.random() - 0.5) * shakeRef.current);
+      }
+
       ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
       
       // Background (Street Style)
@@ -282,6 +360,9 @@ export default function BakuPukul() {
 
       p1.draw(ctx);
       p2.draw(ctx);
+      particlesRef.current.forEach(p => p.draw(ctx));
+
+      ctx.restore();
 
       animationFrameId = requestAnimationFrame(loop);
     };
@@ -323,6 +404,17 @@ export default function BakuPukul() {
 
         {/* Overlays */}
         <AnimatePresence>
+          {showFight && (
+            <motion.div
+              initial={{ scale: 0, opacity: 0 }}
+              animate={{ scale: 1.5, opacity: 1 }}
+              exit={{ scale: 3, opacity: 0 }}
+              className="absolute inset-0 flex items-center justify-center pointer-events-none z-30"
+            >
+              <h2 className="text-9xl font-black italic text-red-600 drop-shadow-[0_0_20px_rgba(255,0,0,0.5)]">FIGHT!</h2>
+            </motion.div>
+          )}
+
           {gameState === 'menu' && (
             <motion.div 
               initial={{ opacity: 0 }}
